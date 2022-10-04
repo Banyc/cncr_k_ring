@@ -1,7 +1,7 @@
 use std::{
     collections::{hash_map::DefaultHasher, HashMap, VecDeque},
     hash::{self, Hasher},
-    sync::{Arc, Mutex},
+    sync::{Arc, RwLock},
 };
 
 pub struct CncrKLtdRing<K, V>
@@ -15,6 +15,7 @@ impl<K, V> CncrKLtdRing<K, V>
 where
     K: Eq + hash::Hash,
 {
+    #[must_use]
     pub fn new(shard_count: usize, ring_size: usize) -> Self {
         let shards = (0..shard_count)
             .map(|_| Shard::new(ring_size))
@@ -42,11 +43,23 @@ where
     }
 }
 
+impl<K, V> CncrKLtdRing<K, V>
+where
+    K: Eq + hash::Hash,
+    V: Clone,
+{
+    #[must_use]
+    pub fn clone_batch_last(&self, key: &K, count: usize) -> Option<Vec<V>> {
+        let index = self.shard_index(key);
+        self.shards[index].clone_batch_last(key, count)
+    }
+}
+
 struct Shard<K, V>
 where
     K: Eq + hash::Hash,
 {
-    map: Mutex<HashMap<K, VecDeque<V>>>,
+    map: RwLock<HashMap<K, VecDeque<V>>>,
     ring_size: usize,
 }
 
@@ -54,16 +67,17 @@ impl<K, V> Shard<K, V>
 where
     K: Eq + hash::Hash,
 {
+    #[must_use]
     fn new(ring_size: usize) -> Self {
         Self {
-            map: Mutex::new(HashMap::new()),
+            map: RwLock::new(HashMap::new()),
             ring_size,
         }
     }
 
     #[must_use]
     fn take_ring(&self, key: &K) -> Option<VecDeque<V>> {
-        let mut map = self.map.lock().unwrap();
+        let mut map = self.map.write().unwrap();
         // swap
         let value = map
             .get_mut(key)
@@ -72,7 +86,7 @@ where
     }
 
     fn push(&self, key: K, value: V) {
-        let mut map = self.map.lock().unwrap();
+        let mut map = self.map.write().unwrap();
         let ring = map
             .entry(key)
             .or_insert_with(|| VecDeque::with_capacity(self.ring_size));
@@ -80,6 +94,21 @@ where
             ring.pop_front();
         }
         ring.push_back(value);
+    }
+}
+
+impl<K, V> Shard<K, V>
+where
+    K: Eq + hash::Hash,
+    V: Clone,
+{
+    #[must_use]
+    fn clone_batch_last(&self, key: &K, count: usize) -> Option<Vec<V>> {
+        let map = self.map.read().unwrap();
+        let value = map
+            .get(key)
+            .map(|v| v.iter().rev().take(count).cloned().collect::<Vec<_>>());
+        value
     }
 }
 
@@ -101,6 +130,10 @@ mod tests {
         ring_map.push("a", 2);
         ring_map.push("a", 3);
         ring_map.push("a", 4);
+        let clones = ring_map.clone_batch_last(&"a", 2);
+        assert_eq!(clones, Some(vec![4, 3]));
+        let clones = ring_map.clone_batch_last(&"a", 4);
+        assert_eq!(clones, Some(vec![4, 3, 2]));
         let ring = ring_map.take_ring(&"a");
         let ring = ring.unwrap();
         assert_eq!(ring.len(), 3);
