@@ -1,7 +1,10 @@
 [package]
-name = "cncr_k_ltd_ring"
+name = "cncr_k_ring"
 version = "0.1.0"
 edition = "2021"
+description = "Shards of keyed ring buffers"
+license = "MIT"
+repository = "https://github.com/Banyc/cncr_k_ring"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
